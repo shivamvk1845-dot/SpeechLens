@@ -111,11 +111,38 @@ def _warped_participant_series(
 
 def _warped_word_rate(features: AcousticFeatures) -> np.ndarray:
     values = np.full(features.times_s.shape, np.nan, dtype=np.float64)
-    for word in features.word_features:
-        midpoint = (float(word["start"]) + float(word["end"])) / 2
-        index = int(np.argmin(np.abs(features.times_s - midpoint)))
-        values[index] = float(word["speech_rate_wps"])
+    words = [
+        (float(word["start"]), float(word["end"]), float(word["speech_rate_wps"]))
+        for word in features.word_features
+        if float(word["end"]) > float(word["start"])
+        and np.isfinite(float(word["speech_rate_wps"]))
+    ]
+    if not words:
+        return values
+
+    words.sort(key=lambda word: (word[0], word[1]))
+    midpoints = np.asarray([(start + end) / 2 for start, end, _ in words])
+    rates = np.asarray([rate for _, _, rate in words])
+    in_speech = (features.times_s >= words[0][0]) & (features.times_s <= words[-1][1])
+    values[in_speech] = np.interp(
+        features.times_s[in_speech],
+        midpoints,
+        rates,
+        left=rates[0],
+        right=rates[-1],
+    )
     return values
+
+
+def _score_card_items(score: dict[str, Any]) -> list[tuple[str, str]]:
+    """Format score labels and values for the dashboard metric cards."""
+    return [
+        ("Overall score", f"{score['total']:.0f}/100"),
+        *(
+            (name.title(), f"{details['score']:.0f}/100")
+            for name, details in score["categories"].items()
+        ),
+    ]
 
 
 def _comparison_figure(
@@ -461,6 +488,9 @@ def main() -> None:
         .block-container {max-width: 1440px; padding-top: 1.5rem;}
         [data-testid="stMetric"] {background:#f8fafc; border:1px solid #e2e8f0;
           padding:16px; border-radius:14px;}
+        [data-testid="stMetric"] [data-testid="stMetricLabel"],
+        [data-testid="stMetric"] [data-testid="stMetricValue"],
+        [data-testid="stMetric"] [data-testid="stMetricDelta"] {color:#1e293b !important;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -555,13 +585,10 @@ def main() -> None:
         st.exception(error)
         return
 
-    metric_columns = st.columns(6)
-    metric_columns[0].metric("Overall score", f"{score['total']:.0f}/100")
-    for column, (name, details) in zip(
-        metric_columns[1:],
-        score["categories"].items(),
-    ):
-        column.metric(name.title(), f"{details['score']:.0f}/100")
+    score_cards = _score_card_items(score)
+    metric_columns = st.columns(len(score_cards))
+    for column, (label, value) in zip(metric_columns, score_cards):
+        column.metric(label, value)
     st.caption(
         f"{len(regions)} detected region(s) · "
         f"{len(comparison.word_deltas)} aligned word match(es) · "

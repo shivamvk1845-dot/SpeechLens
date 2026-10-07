@@ -13,13 +13,17 @@ from streamlit_app import (
     _frame_envelope,
     _highlighted_transcript,
     _region_csv,
+    _score_card_items,
     _warped_participant_series,
+    _warped_word_rate,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from speechlens.compare import ComparisonResult
-from speechlens.features import AcousticFeatures
+from speechlens.compare import ComparisonResult, compare_features
+from speechlens.detect import detect_regions
+from speechlens.features import AcousticFeatures, extract_features
+from speechlens.score import score_comparison
 
 
 def test_upload_decoder_downmixes_and_resamples_wav(tmp_path):
@@ -53,6 +57,65 @@ def test_frame_envelope_and_dtw_warped_series():
     values = _warped_participant_series(comparison, np.array([1, 3, 5]), 2)
 
     np.testing.assert_array_equal(values, [2, 5])
+
+
+def test_score_card_items_preserve_metric_labels_and_values():
+    score = score_comparison(ComparisonResult(dtw_path=[], windows=[], word_deltas=[]))
+
+    assert _score_card_items(score) == [
+        ("Overall score", "100/100"),
+        ("Pace", "100/100"),
+        ("Pitch", "100/100"),
+        ("Volume", "100/100"),
+        ("Pauses", "100/100"),
+        ("Clarity", "100/100"),
+    ]
+
+
+def test_warped_word_rate_interpolates_over_aligned_speech():
+    times = np.arange(101, dtype=float) / 100
+    features = AcousticFeatures(
+        times_s=times,
+        f0_hz=np.full(len(times), 150.0),
+        rms_db=np.full(len(times), -20.0),
+        mfcc=np.zeros((2, len(times))),
+        spectral_centroid_hz=np.full(len(times), 1000.0),
+        spectral_flatness=np.full(len(times), 0.1),
+        hnr_db=np.full(len(times), 10.0),
+        voiced=np.ones(len(times), dtype=bool),
+        word_features=[
+            {"word": "one", "start": 0.2, "end": 0.4, "speech_rate_wps": 2.0},
+            {"word": "two", "start": 0.6, "end": 0.8, "speech_rate_wps": 4.0},
+        ],
+        pause_intervals=[],
+    )
+
+    rates = _warped_word_rate(features)
+
+    assert np.isnan(rates[times < 0.2]).all()
+    assert np.isnan(rates[times > 0.8]).all()
+    assert np.isfinite(rates[(times >= 0.2) & (times <= 0.8)]).all()
+    assert np.count_nonzero(np.isfinite(rates)) > 40
+    assert rates[np.argmin(np.abs(times - 0.3))] == pytest.approx(2.0)
+    assert rates[np.argmin(np.abs(times - 0.5))] == pytest.approx(3.0)
+    assert rates[np.argmin(np.abs(times - 0.7))] == pytest.approx(4.0)
+
+
+def test_identical_baseline_and_participant_audio_have_no_detections():
+    sample_rate = 16_000
+    times = np.arange(sample_rate, dtype=float) / sample_rate
+    audio = 0.4 * np.sin(2 * np.pi * 220 * times)
+    alignments = [
+        {"word": "same", "start": 0.1, "end": 0.5},
+        {"word": "audio", "start": 0.6, "end": 0.9},
+    ]
+    baseline = extract_features(audio, word_alignments=alignments)
+    participant = extract_features(audio.copy(), word_alignments=alignments)
+
+    comparison = compare_features(baseline, participant)
+
+    assert comparison.dtw_path
+    assert detect_regions(comparison) == []
 
 
 def test_comparison_figure_overlays_features_and_marks_regions():
