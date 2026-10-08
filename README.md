@@ -7,6 +7,12 @@ SpeechLens is a speech-delivery feedback system that compares a participant's re
 Built for **Multimodal AI Hackathon 2026 · Track C**.
 
 > **SpeechLens focuses on how something is spoken — not what is being said.**
+>
+> ## 🚀 Live Demo
+
+[**Open SpeechLens →**](https://speechlens.streamlit.app)
+
+Try the live application to compare speech delivery against a baseline recording and explore time-localized acoustic feedback.
 
 ---
 
