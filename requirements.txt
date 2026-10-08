@@ -8,3 +8,4 @@ whisperx==3.8.6
 plotly==6.1.2
 streamlit==1.45.1
 pytest==8.3.5
+setuptools<82
